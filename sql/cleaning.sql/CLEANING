@@ -1,0 +1,68 @@
+
+-- Inspect raw InvoiceDate values to diagnose date format issues before conversion
+SELECT InvoiceDate FROM transactions ORDER BY InvoiceDate LIMIT 5;
+
+
+-- General fix: handles any row where first slash is missing from CSV load
+-- e.g. '0112/2010 08:26' -> '01/12/2010 08:26'
+-- Run this first on a fresh load before any manual fixes
+UPDATE transactions 
+SET InvoiceDate = SUBSTRING(InvoiceDate, 1, 2) || '/' || SUBSTRING(InvoiceDate, 3)
+WHERE InvoiceDate LIKE '0112/%';
+
+-- Hard fix: corrects the single row mangled by previous update attempts
+-- Only needed because the general fix was run on an already partially modified value
+UPDATE transactions 
+SET InvoiceDate = '01/12/2010 08:26'
+WHERE InvoiceDate = '01//0112/2010 08:26';
+
+
+
+-- Turning the invoicedate column into back into timestamp to make it easier to work with
+ALTER TABLE transactions ALTER COLUMN InvoiceDate TYPE TIMESTAMP 
+USING TO_TIMESTAMP(InvoiceDate, 'DD/MM/YYYY HH24:MI');
+
+
+-- Checking for missing values and negative quantities to understand the scope of data cleaning needed
+SELECT COUNT(*) FROM transactions WHERE CustomerID IS NULL;
+SELECT COUNT(*)FROM transactions WHERE Quantity < 0;
+SELECT COUNT(*) FROM transactions WHERE InvoiceNo Like 'C%';
+
+-- Duplicate groups = distinct combinations that appear more than once
+-- Total rows involved in duplication = every row that's part of a duplicate group, including the one you'd keep → sum of COUNT(*) across all those groups.
+
+
+-- Inner query gives duplicate groups with their size
+-- Outer query counts how many duplicate groups there are
+SELECT COUNT(*) FROM (
+SELECT CustomerID,Quantity,InvoiceNO,StockCode,invoicedate, COUNT(*)
+FROM transactions
+GROUP BY CustomerID,Quantity,InvoiceNO,stockcode,Invoicedate
+HAVING COUNT(*) > 1
+) As uniqueduplicates;
+
+-- To find the total number of rows involved in duplication, 
+-- I can sum up the size of each duplicate group minus one (since we would keep one row from each group).
+SELECT SUM(groupsize - 1) FROM (
+SELECT CustomerID,Quantity,InvoiceNO,StockCode,invoicedate, COUNT(*) AS groupsize
+FROM transactions
+GROUP BY CustomerID,Quantity,InvoiceNO,stockcode,Invoicedate
+HAVING COUNT(*) > 1
+) as groupduplicates;
+
+-- Finding the rows in total before removing duplicate rows 
+SELECT COUNT(*) FROM transactions
+-- Finding the rows in total after removing duplicate rows
+SELECT COUNT(*) FROM (SELECT DISTINCT CustomerID,Quantity,InvoiceNO,StockCode,invoicedate
+FROM transactions) AS uniqueduplicates;
+
+-- Saves duplicates as temp variable to make it easier to work with
+-- THe select * bascially selects the ouput table given by the inner query
+
+WITH duplicates AS (SELECT ctid , 
+ROW_NUMBER() OVER (PARTITION BY CustomerID,Quantity,InvoiceNO,StockCode,invoicedate ORDER BY (InvoiceDate)) AS rn 
+FROM transactions
+ )
+
+-- SELECT ctid FROM duplicates WHERE rn > 1;
+DELETE  FROM transactions where ctid in (SELECT ctid FROM duplicates WHERE rn > 1);

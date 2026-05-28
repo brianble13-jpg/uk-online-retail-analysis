@@ -1,0 +1,183 @@
+
+
+-- Revenue by country with returns
+SELECT SUM(QUANTITY * unitprice) as revenue, country FROM transactions GROUP BY country ORDER BY revenue DESC;
+
+
+-- Revenue by country without returns
+SELECT SUM(QUANTITY * unitprice) as revenue, country FROM transactions WHERE quantity > 0
+GROUP BY country ORDER BY revenue DESC;
+
+-- Revenue by country with at least 10000 in revenue
+SELECT SUM(quantity * unitprice) AS revenue, country 
+FROM transactions 
+GROUP BY country 
+HAVING SUM(quantity * unitprice) > 10000
+ORDER BY revenue DESC;
+
+-- Sort by revenue for the month
+
+WITH monthly AS (
+    SELECT DATE_TRUNC('month', invoicedate) AS month,
+           SUM(quantity * unitprice) AS revenue
+    FROM transactions
+    GROUP BY DATE_TRUNC('month', invoicedate)
+)
+SELECT month,
+       revenue,
+       SUM(revenue) OVER (ORDER BY month) AS running_total
+FROM monthly
+ORDER BY month;
+
+-- Table showing monthly revenue and percentage chagne from previous month
+
+ WITH monthly AS (
+    SELECT DATE_TRUNC('month', invoicedate) AS month,
+           SUM(quantity * unitprice) AS revenue
+    FROM transactions
+    GROUP BY DATE_TRUNC('month', invoicedate)
+)
+SELECT month,
+       revenue,
+       LAG(revenue) OVER (ORDER BY month) AS prev_month,
+       ((revenue - LAG(revenue) OVER (ORDER BY month)) / LAG(revenue) OVER (ORDER BY month)) * 100 AS pct_change
+FROM monthly
+ORDER BY month;
+
+
+
+ WITH product_revenue AS (
+    SELECT
+        Country,
+        StockCode,
+        Description,
+        SUM(Quantity * UnitPrice) AS revenue
+    FROM transactions
+    GROUP BY
+        Country,
+        StockCode,
+        Description
+),
+ranked_products AS (
+    SELECT
+        Country,
+        StockCode,
+        Description,
+        revenue,
+        ROW_NUMBER() OVER (
+            PARTITION BY Country
+            ORDER BY revenue DESC
+        ) AS rn
+    FROM product_revenue
+)
+SELECT
+    Country,
+    StockCode,
+    Description,
+    revenue,
+    rn
+FROM ranked_products
+WHERE rn <= 3
+ORDER BY Country, rn;
+
+
+
+
+-- cohort analysis of customer retention by month for UK customers
+
+WITH cohorts AS (
+    SELECT
+        CustomerID,
+        MIN(DATE_TRUNC('month', transactions.InvoiceDate)) AS cohort_month
+    FROM transactions
+    WHERE Country = 'United Kingdom'
+    GROUP BY CustomerID
+),
+
+cohort_purchases AS (
+    SELECT
+        c.cohort_month,
+        DATE_TRUNC('month', transactions.InvoiceDate) AS purchase_month,
+        COUNT(DISTINCT transactions.CustomerID) AS num_customers
+    FROM transactions
+    JOIN cohorts c ON transactions.CustomerID = c.CustomerID
+    WHERE transactions.Country = 'United Kingdom'
+    GROUP BY c.cohort_month, DATE_TRUNC('month', transactions.InvoiceDate)
+),
+
+cohort_sizes AS (
+    SELECT
+        cohort_month,
+        COUNT(DISTINCT CustomerID) AS cohort_size
+    FROM cohorts
+    GROUP BY cohort_month
+)
+
+SELECT
+    cp.cohort_month,
+    cp.purchase_month,
+    cp.num_customers,
+    cs.cohort_size,
+    ROUND((cp.num_customers::DECIMAL / cs.cohort_size) * 100, 2) AS retention_rate
+FROM cohort_purchases cp
+JOIN cohort_sizes cs ON cp.cohort_month = cs.cohort_month
+ORDER BY cp.cohort_month, cp.purchase_month;
+
+
+
+-- Monthly revenue, number of orders, and average order value for UK customers
+SELECT
+    DATE_TRUNC('month', InvoiceDate) AS month,
+    SUM(Quantity * UnitPrice) AS total_revenue,
+    COUNT(DISTINCT InvoiceNo) AS num_orders,
+    SUM(Quantity * UnitPrice) / COUNT(DISTINCT InvoiceNo) AS aov
+FROM transactions
+WHERE Country = 'United Kingdom'
+GROUP BY DATE_TRUNC('month', InvoiceDate)
+ORDER BY month;
+
+-- repeat vs one-time customer split for UK customers
+
+WITH customer_orders AS (
+    SELECT
+        CustomerID,
+        COUNT(DISTINCT InvoiceNo) AS num_orders
+    FROM transactions
+    WHERE Country = 'United Kingdom'
+    GROUP BY CustomerID
+)
+SELECT
+    CASE
+        WHEN num_orders = 1 THEN 'One-time'
+        ELSE 'Repeat'
+    END AS customer_type,
+    COUNT(*) AS num_customers,
+    SUM(num_orders) AS total_orders,
+    SUM(num_orders) / COUNT(*) AS avg_orders_per_customer
+FROM customer_orders
+GROUP BY customer_type; 
+
+-- Top 10 products by revenue for UK customers, excluding postage
+SELECT
+STOCKCODE,
+DESCRIPTION,
+SUM(QUANTITY * Unitprice) as total_revenue
+FROM transactions
+WHERE Country = 'United Kingdom' and DESCRIPTION NOT LIKE '%POSTAGE%'
+GROUP BY STOCKCODE,DESCRIPTION
+ORDER BY total_revenue DESC,DESCRIPTION DESC
+LIMIT 10;
+
+-- Total revenue per country for all countries, exluding returns
+SELECT
+Country,
+SUM(QUANTITY * UnitPrice) AS total_revenue
+FROM transactions WHERE Quantity > 0
+GROUP BY country
+ORDER BY total_revenue DESC;
+
+--indexing for faster queries 
+CREATE INDEX idx_country ON transactions(Country);
+CREATE INDEX idx_invoicedate ON transactions(InvoiceDate);
+CREATE INDEX idx_customerid ON transactions(CustomerID);
+CREATE INDEX idx_stockcode ON transactions(StockCode);

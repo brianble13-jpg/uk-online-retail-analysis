@@ -1,0 +1,8 @@
+
+# Count rows with NULL CustomerID to understand scope of guest checkouts
+
+COPY transactions FROM '/tmp/Online Retail.csv'
+WITH (FORMAT CSV, HEADER TRUE, ENCODING 'UTF8');
+
+SELECT COUNT(*) FROM transactions;
+

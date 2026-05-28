@@ -1,0 +1,16 @@
+DROP TABLE IF EXISTS transactions;
+
+CREATE TABLE transactions (
+    InvoiceNo VARCHAR(255), 
+    StockCode VARCHAR(255),
+    Description VARCHAR(255),
+    Quantity INT,
+    InvoiceDate TIMESTAMP,
+    unitprice NUMERIC(10,2),
+    CustomerID INT,
+    Country VARCHAR(255)
+)
+
+
+
+
